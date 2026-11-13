@@ -22,15 +22,13 @@
             display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 2; opacity: 0.6; user-select: none;
         }
         /* 調整時間長度的控制拉桿 */
-        .resize-handle {
-            position: absolute; bottom: 0; left: 0; right: 0; height: 8px; cursor: ns-resize; background: rgba(0,0,0,0.1); border-radius: 0 0 4px 4px;
-        }
+        .resize-handle { position: absolute; bottom: 0; left: 0; right: 0; height: 14px; cursor: ns-resize; background: rgba(0,0,0,0.15); border-radius: 0 0 4px 4px; touch-action: none; }
         
         .pool-container { position: sticky; bottom: 10px; z-index: 20; background-color: #ffffff; border-radius: 12px; padding: 16px; border: 1px solid #e1e4e8; box-shadow: 0 -4px 16px rgba(0,0,0,0.08); }
         .pool-container.drag-over { background-color: #ffebee; border: 2px dashed #ef5350; }
         .pool-title { font-size: 14px; font-weight: bold; color: #555; margin-bottom: 12px; }
         .block-pool { display: flex; gap: 10px; flex-wrap: wrap; }
-        .time-block { padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; color: #ffffff; cursor: grab; }
+        .time-block { padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; color: #ffffff; cursor: grab; touch-action: none; }
         .block-work { background-color: #2b5797; }
         .block-cook { background-color: #33a853; }
         .block-lesson { background-color: #6f42c1; }
@@ -165,8 +163,8 @@
                     for(let i=0; i<blockObj.size; i++) scheduleData[day][sRow + i] = null;
                     blockObj.el.remove();
                     playPopSound();
+		    updateRestTime();
                     saveSchedule(); // 刪除積木後自動存檔
-
                 }
             }
         };
@@ -243,6 +241,10 @@
             handle.onmousedown = (e) => initResize(e, day, startRow);
             blockEl.appendChild(handle);
 
+            // 【新增：綁定 iPhone 手指觸控拉長與拖回刪除】
+            handle.ontouchstart = (e) => initTouchResize(e, day, startRow);
+            bindTouchBlockRemove(blockEl, day, startRow);
+
             document.getElementById(`cell-${day}-${startRow}`).appendChild(blockEl);
             if (!skipPush) playClickSound();
             
@@ -288,6 +290,7 @@
                 window.removeEventListener('mousemove', doResize);
                 window.removeEventListener('mouseup', stopResize);
                 playClickSound();
+ 		updateRestTime();
                 saveSchedule(); // 調整時間長短後自動存檔
 
             }
@@ -615,6 +618,165 @@
 
         // 網頁一載入完成，立刻執行還原紀錄
         window.addEventListener('DOMContentLoaded', loadSchedule);
+
+        // ==================== 【新增：iPhone 專屬手指觸控引擎】 ====================
+        let touchGhost = null;
+        let touchDragData = null;
+
+        // 1. 讓下方積木庫支援手指按住拖曳
+        document.querySelectorAll('.time-block').forEach(block => {
+            block.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                playPopSound();
+                const touch = e.touches[0];
+                touchDragData = {
+                    isNew: true,
+                    type: block.dataset.type,
+                    name: block.dataset.name
+                };
+
+                // 產生一顆跟著手指移動的視覺幽靈積木
+                touchGhost = block.cloneNode(true);
+                touchGhost.style.position = 'fixed';
+                touchGhost.style.opacity = '0.85';
+                touchGhost.style.pointerEvents = 'none';
+                touchGhost.style.zIndex = '9999';
+                touchGhost.style.transform = 'scale(1.05)';
+                touchGhost.style.left = `${touch.clientX - 40}px`;
+                touchGhost.style.top = `${touch.clientY - 20}px`;
+                document.body.appendChild(touchGhost);
+            }, { passive: false });
+        });
+
+        // 2. 讓表格內的積木支援手指往下拉回積木庫刪除
+        function bindTouchBlockRemove(blockEl, day, startRow) {
+            let startY = 0;
+            let isDraggingToDelete = false;
+
+            blockEl.addEventListener('touchstart', (e) => {
+                if (e.target.classList.contains('resize-handle')) return;
+                startY = e.touches[0].clientY;
+                isDraggingToDelete = false;
+            }, { passive: true });
+
+            blockEl.addEventListener('touchmove', (e) => {
+                if (e.target.classList.contains('resize-handle')) return;
+                const touch = e.touches[0];
+                // 如果手指明顯往下滑動超過 25px，啟動刪除拖曳模式
+                if (Math.abs(touch.clientY - startY) > 25 && !isDraggingToDelete) {
+                    isDraggingToDelete = true;
+                    touchDragData = { isNew: false, day: day, startRow: startRow };
+                    
+                    touchGhost = blockEl.cloneNode(true);
+                    touchGhost.style.position = 'fixed';
+                    touchGhost.style.width = '80px';
+                    touchGhost.style.height = '36px';
+                    touchGhost.style.opacity = '0.85';
+                    touchGhost.style.pointerEvents = 'none';
+                    touchGhost.style.zIndex = '9999';
+                    document.body.appendChild(touchGhost);
+                }
+
+                if (isDraggingToDelete && touchGhost) {
+                    e.preventDefault();
+                    touchGhost.style.left = `${touch.clientX - 40}px`;
+                    touchGhost.style.top = `${touch.clientY - 18}px`;
+                }
+            }, { passive: false });
+        }
+
+        // 3. 全域監聽手指移動與放開（判斷放進表格或丟進垃圾桶）
+        window.addEventListener('touchmove', (e) => {
+            if (!touchGhost) return;
+            e.preventDefault();
+            const touch = e.touches[0];
+            touchGhost.style.left = `${touch.clientX - 40}px`;
+            touchGhost.style.top = `${touch.clientY - 20}px`;
+
+            // 讓手指經過的格子亮起淡藍色提示
+            document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+            const targetEl = document.elementFromPoint(touch.clientX, touch.clientY);
+            if (targetEl) {
+                const cell = targetEl.closest('.schedule-cell');
+                const poolBox = targetEl.closest('#pool-container');
+                if (cell && touchDragData.isNew) cell.classList.add('drag-over');
+                if (poolBox && !touchDragData.isNew) poolBox.classList.add('drag-over');
+            }
+        }, { passive: false });
+
+        window.addEventListener('touchend', (e) => {
+            if (!touchGhost || !touchDragData) return;
+            const touch = e.changedTouches[0];
+            touchGhost.remove();
+            touchGhost = null;
+            document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+
+            // 偵測手指放開時停在哪個元件上方
+            const targetEl = document.elementFromPoint(touch.clientX, touch.clientY);
+            if (targetEl) {
+                if (touchDragData.isNew) {
+                    const cell = targetEl.closest('.schedule-cell');
+                    if (cell) {
+                        const day = parseInt(cell.dataset.day);
+                        const targetRow = parseInt(cell.dataset.row);
+                        createBlock(day, targetRow, 3, touchDragData.type, touchDragData.name);
+                    }
+                } else {
+                    const poolBox = targetEl.closest('#pool-container');
+                    if (poolBox) {
+                        const { day, startRow } = touchDragData;
+                        const blockObj = scheduleData[day][startRow];
+                        if (blockObj) {
+                            for (let i = 0; i < blockObj.size; i++) {
+                                if (startRow + i < scheduleData[day].length) scheduleData[day][startRow + i] = null;
+                            }
+                            blockObj.el.remove();
+                            playPopSound();
+                            updateRestTime();
+                            saveSchedule();
+                        }
+                    }
+                }
+            }
+            touchDragData = null;
+        });
+
+        // 4. 手指觸控拉桿調整時間長短
+        function initTouchResize(e, day, startRow) {
+            e.stopPropagation();
+            e.preventDefault();
+            const blockObj = scheduleData[day][startRow];
+            const startY = e.touches[0].clientY;
+            const startSize = blockObj.size;
+
+            function doTouchResize(moveEvent) {
+                moveEvent.preventDefault();
+                const deltaY = moveEvent.touches[0].clientY - startY;
+                let newSize = startSize + Math.round(deltaY / currentCellHeight);
+                if (newSize < 1) newSize = 1;
+
+                if (newSize !== blockObj.size) {
+                    if (startRow + newSize > scheduleData[day].length) return;
+                    for (let i = 0; i < blockObj.size; i++) scheduleData[day][startRow + i] = null;
+                    if (newSize > blockObj.size) pushBlocksDown(day, startRow + blockObj.size, newSize - blockObj.size);
+
+                    blockObj.size = newSize;
+                    blockObj.el.style.height = `${(newSize * currentCellHeight) - 2}px`;
+                    for (let i = 0; i < newSize; i++) scheduleData[day][startRow + i] = blockObj;
+                }
+            }
+
+            function stopTouchResize() {
+                window.removeEventListener('touchmove', doTouchResize);
+                window.removeEventListener('touchend', stopTouchResize);
+                playClickSound();
+                updateRestTime();
+                saveSchedule();
+            }
+
+            window.addEventListener('touchmove', doTouchResize, { passive: false });
+            window.addEventListener('touchend', stopTouchResize);
+        }
 
     </script>
 </body>
