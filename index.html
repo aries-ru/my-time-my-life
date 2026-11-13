@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Time, My Life</title>
+    <style>
+        /* 1. 解除單一螢幕高度限制，讓網頁可以自然向下延伸 */
+        body { font-family: -apple-system, sans-serif; background-color: #f5f7fa; margin: 0; padding: 16px; display: flex; flex-direction: column; min-height: 100vh; box-sizing: border-box; }
+        h1 { text-align: center; color: #333; font-size: 24px; margin: 0 0 16px 0; }
+        /* 2. 設定表格明確的加長高度（這裡設為 70vh，佔螢幕七成高度，你也可以改成 800px） */
+        .grid-container { height: 70vh; min-height: 550px; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); overflow-y: auto; border: 1px solid #e1e4e8; margin-bottom: 16px; }        .time-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        .time-table th { background-color: #ffffff; position: sticky; top: 0; z-index: 10; padding: 12px 4px; font-size: 14px; color: #666; border-bottom: 2px solid #e1e4e8; }
+        .time-col, .time-cell { width: 60px; font-weight: bold; color: #999; background-color: #fafafa; text-align: center; }
+        .time-table td { border: 1px solid #f0f0f0; height: 40px; box-sizing: border-box; position: relative; }
+        .schedule-cell { background-image: linear-gradient(rgba(0, 0, 0, 0.02) 1px, transparent 1px); background-size: 100% 10px; }
+        .schedule-cell.drag-over { background-color: #e3f2fd; }
+        
+        /* 表格內積木 */
+        .placed-block {
+            position: absolute; top: 1px; left: 1px; right: 1px; border-radius: 4px; color: white; font-size: 12px; font-weight: 500;
+            display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); z-index: 2; opacity: 0.6; user-select: none;
+        }
+        /* 調整時間長度的控制拉桿 */
+        .resize-handle {
+            position: absolute; bottom: 0; left: 0; right: 0; height: 8px; cursor: ns-resize; background: rgba(0,0,0,0.1); border-radius: 0 0 4px 4px;
+        }
+        
+        .pool-container { position: sticky; bottom: 10px; z-index: 20; background-color: #ffffff; border-radius: 12px; padding: 16px; border: 1px solid #e1e4e8; box-shadow: 0 -4px 16px rgba(0,0,0,0.08); }
+        .pool-container.drag-over { background-color: #ffebee; border: 2px dashed #ef5350; }
+        .pool-title { font-size: 14px; font-weight: bold; color: #555; margin-bottom: 12px; }
+        .block-pool { display: flex; gap: 10px; flex-wrap: wrap; }
+        .time-block { padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; color: #ffffff; cursor: grab; }
+        .block-work { background-color: #2b5797; }
+        .block-cook { background-color: #33a853; }
+        .block-lesson { background-color: #6f42c1; }
+        .block-guitar { background-color: #ff9800; }
+        .block-sing { background-color: #e91e63; }
+        .block-theory { background-color: #f4b400; }
+        .block-sleep { background-color: #3f51b5; }
+
+        /* 【一週回顧卡視覺樣式】 */
+        .review-container { background-color: #ffffff; border-radius: 12px; padding: 16px; border: 1px solid #e1e4e8; margin-bottom: 16px; display: none; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        .review-title { font-size: 16px; font-weight: bold; color: #333; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
+        .stat-item { display: flex; align-items: center; margin: 10px 0; font-size: 14px; }
+        .stat-color { width: 16px; height: 16px; border-radius: 4px; margin-right: 8px; flex-shrink: 0; }
+        .stat-bar-bg { flex: 1; height: 12px; background: #eee; border-radius: 6px; margin: 0 12px; overflow: hidden; }
+        .stat-bar-fill { height: 100%; border-radius: 6px; width: 0%; transition: width 0.6s ease-out; }
+
+    </style>
+</head>
+<body>
+
+    <h1>⏱️ My Time, My Life</h1>
+
+    <!-- 【整合版：放大鏡縮放橫槓在左 + 休息統計按鈕在右】 -->
+    <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 16px; margin-bottom: 16px;">
+        
+        <!-- 左側：放大鏡縮放橫槓 -->
+        <div style="display: flex; align-items: center; gap: 10px; background: #ffffff; padding: 8px 16px; border-radius: 12px; border: 1px solid #e1e4e8; box-shadow: 0 2px 6px rgba(0,0,0,0.02);">
+            <span style="font-size: 14px; font-weight: bold; color: #555;">🔍 縮放：</span>
+            <span style="font-size: 12px; color: #888;">1小時</span>
+            <input type="range" id="zoom-slider" min="10" max="40" value="40" step="5" style="width: 140px; cursor: pointer;" oninput="updateZoom(this.value)">
+            <span style="font-size: 12px; color: #888;">10分鐘</span>
+            <span id="zoom-label" style="font-size: 13px; font-weight: bold; color: #007afc; min-width: 85px; text-align: right;">10 分鐘 / 格</span>
+        </div>
+
+        <!-- 右側：休息時間統計按鈕 -->
+        <button onclick="toggleRestDashboard()" style="background-color: #34a853; color: white; border: none; padding: 10px 16px; border-radius: 12px; font-weight: bold; cursor: pointer; font-size: 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.05);">
+            ☕ 查看每日休息時間統計
+        </button>
+
+        <!-- 最右側：一週回顧結算按鈕 -->
+        <button onclick="generateWeeklyReview()" style="background-color: #007afc; color: white; border: none; padding: 10px 16px; border-radius: 12px; font-weight: bold; cursor: pointer; font-size: 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.05);">
+            📊 生成本週生活回顧卡
+        </button>
+
+    </div>
+
+    <!-- 點擊按鈕後才展開的休息時間資訊卡（獨立在下方展開，才不會擠歪按鈕） -->
+    <div style="display: none; background: #e6f4ea; border: 1px solid #34a853; border-radius: 12px; padding: 12px; margin-bottom: 16px; text-align: center; font-size: 14px; color: #137333; font-weight: bold;" id="rest-dashboard">
+    </div>
+
+    <!-- 點擊後展開的一週回顧成就看板 -->
+    <div class="review-container" id="review-card">
+        <div class="review-title">
+            <span>🏆 本週下班生活成就結算</span>
+            <button style="background:none; border:none; color:#999; cursor:pointer; font-size: 16px;" onclick="document.getElementById('review-card').style.display='none'">✕ 關閉</button>
+        </div>
+        <div id="review-completion" style="font-size: 15px; font-weight: bold; color: #2b5797; margin-bottom: 16px; background: #e8f0fe; padding: 10px; border-radius: 8px;"></div>
+        <div id="review-stats-list"></div>
+    </div>
+
+    <div class="grid-container">
+        <table class="time-table">
+            <thead>
+                <tr><th class="time-col">時間</th><th>一</th><th>二</th><th>三</th><th>四</th><th>五</th><th>六</th><th>日</th></tr>
+            </thead>
+            <tbody id="grid-body"></tbody>
+        </table>
+    </div>
+
+    <!-- 積木庫兼回收區 -->
+    <div class="pool-container" id="pool-container">
+        <div class="pool-title">📦 我的活動積木庫（可將表格內積木拉回此處刪除）</div>
+        <div class="block-pool">
+            <div class="time-block block-work" draggable="true" data-type="block-work" data-name="💼 上班" ondragstart="drag(event)">💼 上班</div>
+            <div class="time-block block-cook" draggable="true" data-type="block-cook" data-name="🍳 做菜" ondragstart="drag(event)">🍳 做菜</div>
+            <div class="time-block block-lesson" draggable="true" data-type="block-lesson" data-name="📝 教案/備課" ondragstart="drag(event)">📝 教案/備課</div>
+            <div class="time-block block-guitar" draggable="true" data-type="block-guitar" data-name="🎸 練吉他" ondragstart="drag(event)">🎸 練吉他</div>
+            <div class="time-block block-sing" draggable="true" data-type="block-sing" data-name="🎤 練唱歌" ondragstart="drag(event)">🎤 練唱歌</div>
+            <div class="time-block block-theory" draggable="true" data-type="block-theory" data-name="🎼 學樂理" ondragstart="drag(event)">🎼 學樂理</div>
+            <div class="time-block" draggable="true" data-type="block-sleep" data-name="💤 睡覺" ondragstart="drag(event)" style="background-color: #3f51b5;">💤 睡覺</div>
+        </div>
+    </div>
+
+    <script>
+        const startHour = 6, endHour = 24;
+        const tbody = document.getElementById('grid-body');
+        const pool = document.getElementById('pool-container');
+        const scheduleData = Array.from({ length: 7 }, () => []);
+        let currentCellHeight = 40; // 動態記錄目前每 10 分鐘格子的高度
+
+
+        let rowIndex = 0;
+        for (let hour = startHour; hour < endHour; hour++) {
+            for (let min = 0; min < 60; min += 10) {
+                const row = document.createElement('tr');
+                row.dataset.min = min; // 👈 這就是我說的「貼上專屬標記」
+                
+                const timeString = `${hour.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`;
+                const timeCell = document.createElement('td');
+                timeCell.className = 'time-cell';
+                timeCell.dataset.fullTime = timeString; // 👈 這裡也是標記
+                timeCell.innerText = timeString;
+                row.appendChild(timeCell);
+
+                for (let day = 0; day < 7; day++) {
+                    const cell = document.createElement('td');
+                    cell.className = 'schedule-cell'; cell.id = `cell-${day}-${rowIndex}`;
+                    cell.dataset.day = day; cell.dataset.row = rowIndex;
+                    cell.ondragover = (e) => e.preventDefault();
+                    cell.ondragenter = (e) => { if(e.target.classList.contains('schedule-cell')) e.target.classList.add('drag-over'); };
+                    cell.ondragleave = (e) => e.target.classList.remove('drag-over');
+                    cell.ondrop = drop;
+                    row.appendChild(cell);
+                    scheduleData[day].push(null);
+                }
+                tbody.appendChild(row); rowIndex++;
+            }
+        }
+
+        // 積木庫接收回收事件
+        pool.ondragover = (e) => e.preventDefault();
+        pool.ondragenter = () => pool.classList.add('drag-over');
+        pool.ondragleave = () => pool.classList.remove('drag-over');
+        pool.ondrop = (e) => {
+            e.preventDefault(); pool.classList.remove('drag-over');
+            const blockId = e.dataTransfer.getData("blockId");
+            if(blockId) {
+                const info = blockId.split('-');
+                const day = parseInt(info[1]), sRow = parseInt(info[2]);
+                const blockObj = scheduleData[day][sRow];
+                if(blockObj) {
+                    for(let i=0; i<blockObj.size; i++) scheduleData[day][sRow + i] = null;
+                    blockObj.el.remove();
+                    playPopSound();
+                    saveSchedule(); // 刪除積木後自動存檔
+
+                }
+            }
+        };
+
+        function drag(ev) {
+            playPopSound();
+            ev.dataTransfer.setData("type", ev.target.dataset.type);
+            ev.dataTransfer.setData("name", ev.target.dataset.name);
+            ev.dataTransfer.setData("isNew", "true");
+        }
+
+        function drop(ev) {
+            ev.preventDefault();
+            const cell = ev.target.closest('.schedule-cell');
+            if (!cell) return;
+            cell.classList.remove('drag-over');
+            
+            const day = parseInt(cell.dataset.day), targetRow = parseInt(cell.dataset.row);
+            const isNew = ev.dataTransfer.getData("isNew");
+
+            if (isNew === "true") {
+                const type = ev.dataTransfer.getData("type"), name = ev.dataTransfer.getData("name");
+                if (!type || !name) return;
+                createBlock(day, targetRow, 3, type, name);
+            }
+        }
+
+        function createBlock(day, startRow, size, type, name, isDone = false, skipPush = false) {
+            // 讀取存檔時不需要再觸發推擠，避免重複推開
+            if (!skipPush) {
+                pushBlocksDown(day, startRow, size);
+            }
+
+            const blockEl = document.createElement('div');
+            blockEl.className = `placed-block ${type}`;
+            blockEl.innerText = name;
+            blockEl.style.height = `${(size * currentCellHeight) - 2}px`;
+            blockEl.setAttribute('draggable', 'true');
+            
+            // 依據存檔狀態還原「半透明」或「蓋章填滿」外觀
+            if (isDone) {
+                blockEl.style.opacity = "1";
+                blockEl.style.boxShadow = "0 4px 8px rgba(0,0,0,0.2)";
+            } else {
+                blockEl.style.opacity = "0.6";
+                blockEl.style.boxShadow = "0 2px 4px rgba(0,0,0,0.1)";
+            }
+
+            const blockObj = { el: blockEl, type: type, name: name, size: size, startRow: startRow, isDone: isDone };
+            
+            blockEl.onclick = (e) => {
+                e.stopPropagation();
+                if (blockEl.style.opacity === "1") {
+                    blockEl.style.opacity = "0.6";
+                    blockEl.style.boxShadow = "0 2px 4px rgba(0,0,0,0.1)";
+                    blockObj.isDone = false;
+                    playClickSound();
+                } else {
+                    blockEl.style.opacity = "1";
+                    blockEl.style.boxShadow = "0 4px 8px rgba(0,0,0,0.2)";
+                    blockObj.isDone = true;
+                    playStampAndChimeSound();
+                }
+                saveSchedule(); // 點擊蓋章或取消時自動存檔
+            };
+            
+            blockEl.ondragstart = (e) => {
+                e.dataTransfer.setData("blockId", `b-${day}-${startRow}`);
+                e.dataTransfer.setData("isNew", "false");
+            };
+
+            const handle = document.createElement('div');
+            handle.className = 'resize-handle';
+            handle.onmousedown = (e) => initResize(e, day, startRow);
+            blockEl.appendChild(handle);
+
+            document.getElementById(`cell-${day}-${startRow}`).appendChild(blockEl);
+            if (!skipPush) playClickSound();
+            
+            for(let i=0; i<size; i++) {
+                if(startRow + i < scheduleData[day].length) scheduleData[day][startRow + i] = blockObj;
+            }
+            
+            if (!skipPush) {
+                updateRestTime();
+                saveSchedule(); // 放入新積木時自動存檔
+            }
+        }
+
+        // 調整大小邏輯
+        function initResize(e, day, startRow) {
+            e.stopPropagation(); e.preventDefault();
+            const blockObj = scheduleData[day][startRow];
+            const startY = e.clientY;
+            const startSize = blockObj.size;
+
+            function doResize(moveEvent) {
+                const deltaY = moveEvent.clientY - startY;
+		let newSize = startSize + Math.round(deltaY / currentCellHeight);
+                if (newSize < 1) newSize = 1; // 最小 10 分鐘
+                
+                if (newSize !== blockObj.size) {
+                    if (startRow + newSize > scheduleData[day].length) return;
+                    
+                    // 清空舊格子
+                    for(let i=0; i<blockObj.size; i++) scheduleData[day][startRow + i] = null;
+                    
+                    // 推擠下方
+                    if (newSize > blockObj.size) pushBlocksDown(day, startRow + blockObj.size, newSize - blockObj.size);
+                    
+                    blockObj.size = newSize;
+		    blockObj.el.style.height = `${(newSize * currentCellHeight) - 2}px`;
+                    
+                    for(let i=0; i<newSize; i++) scheduleData[day][startRow + i] = blockObj;
+                }
+            }
+
+            function stopResize() {
+                window.removeEventListener('mousemove', doResize);
+                window.removeEventListener('mouseup', stopResize);
+                playClickSound();
+                saveSchedule(); // 調整時間長短後自動存檔
+
+            }
+
+            window.addEventListener('mousemove', doResize);
+            window.addEventListener('mouseup', stopResize);
+        }
+
+        function pushBlocksDown(day, startRow, pushSize) {
+            let hasPushed = false;
+            for (let r = scheduleData[day].length - 1; r >= startRow; r--) {
+                const currentBlock = scheduleData[day][r];
+                if (currentBlock && currentBlock.startRow === r) {
+                    if (r < startRow + pushSize || hasPushed) {
+                        const newStartRow = currentBlock.startRow + pushSize;
+                        for(let i=0; i<currentBlock.size; i++) {
+                            if(currentBlock.startRow + i < scheduleData[day].length) scheduleData[day][currentBlock.startRow + i] = null;
+                        }
+                        if (newStartRow < scheduleData[day].length) {
+                            currentBlock.startRow = newStartRow;
+                            document.getElementById(`cell-${day}-${newStartRow}`).appendChild(currentBlock.el);
+                            for(let i=0; i<currentBlock.size; i++) {
+                                if(newStartRow + i < scheduleData[day].length) scheduleData[day][newStartRow + i] = currentBlock;
+                            }
+                        } else { currentBlock.el.remove(); }
+                        hasPushed = true;
+                    }
+                }
+            }
+            if(hasPushed) setTimeout(playClickSound, 80);
+        }
+
+        let audioCtx = null;
+        function initAudio() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+        function playPopSound() {
+            initAudio(); const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination); osc.type = 'sine'; const now = audioCtx.currentTime;
+            osc.frequency.setValueAtTime(150, now); osc.frequency.exponentialRampToValueAtTime(400, now + 0.04);
+            gain.gain.setValueAtTime(0.2, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+            osc.start(now); osc.stop(now + 0.08);
+        }
+        function playClickSound() {
+            initAudio(); const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+            osc.connect(gain); gain.connect(audioCtx.destination); osc.type = 'triangle'; const now = audioCtx.currentTime;
+            osc.frequency.setValueAtTime(250, now); osc.frequency.exponentialRampToValueAtTime(60, now + 0.03);
+            gain.gain.setValueAtTime(0.3, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.04);
+            osc.start(now); osc.stop(now + 0.04);
+        }
+
+        // 蓋章填滿專用：咚（Stamp）+ 叮鈴（Chime）雙重音效
+        function playStampAndChimeSound() {
+            initAudio();
+            const now = audioCtx.currentTime;
+
+            // 1. 模擬印章蓋下去扎實的「咚」低音（使用三角波，極速淡出）
+            const oscStamp = audioCtx.createOscillator();
+            const gainStamp = audioCtx.createGain();
+            oscStamp.connect(gainStamp); gainStamp.connect(audioCtx.destination);
+            oscStamp.type = 'triangle';
+            oscStamp.frequency.setValueAtTime(100, now);
+            oscStamp.frequency.exponentialRampToValueAtTime(30, now + 0.05);
+            gainStamp.gain.setValueAtTime(0.5, now);
+            gainStamp.gain.exponentialRampToValueAtTime(0.01, now + 0.06);
+            oscStamp.start(now); oscStamp.stop(now + 0.06);
+
+            // 2. 隨後響起清脆有成就感的「叮鈴」高音（兩個正弦波重疊，形成清脆和弦）
+            const oscChime1 = audioCtx.createOscillator();
+            const oscChime2 = audioCtx.createOscillator();
+            const gainChime = audioCtx.createGain();
+            oscChime1.connect(gainChime); oscChime2.connect(gainChime);
+            gainChime.connect(audioCtx.destination);
+            
+            oscChime1.type = 'sine'; oscChime2.type = 'sine';
+            // 精心調配的高音和弦頻率
+            oscChime1.frequency.setValueAtTime(880, now + 0.04); 
+            oscChime2.frequency.setValueAtTime(1320, now + 0.04);
+            
+            gainChime.gain.setValueAtTime(0.0, now);
+            gainChime.gain.linearRampToValueAtTime(0.15, now + 0.06); // 微微漸入
+            gainChime.gain.exponentialRampToValueAtTime(0.001, now + 0.4); // 悠長尾音
+            
+            oscChime1.start(now + 0.04); oscChime1.stop(now + 0.4);
+            oscChime2.start(now + 0.04); oscChime2.stop(now + 0.4);
+        }
+
+        // 【新增：點擊按鈕展開/收合休息時間資訊】
+        function toggleRestDashboard() {
+            const dashboard = document.getElementById('rest-dashboard');
+            if (dashboard.style.display === 'none') {
+                updateRestTime(); // 展開前先重新計算最新數據
+                dashboard.style.display = 'block';
+                playClickSound();
+            } else {
+                dashboard.style.display = 'none';
+                playClickSound();
+            }
+        }
+
+        // 【新增：休息時間計算核心】
+        function updateRestTime() {
+            // 計算每天的總留白格子數（一格代表10分鐘）
+            let daysRest = Array(7).fill(0);
+            
+            for (let day = 0; day < 7; day++) {
+                let emptyCells = 0;
+                for (let r = 0; r < scheduleData[day].length; r++) {
+                    if (scheduleData[day][r] === null) {
+                        emptyCells++;
+                    }
+                }
+                daysRest[day] = emptyCells * 10; // 換算成分鐘
+            }
+
+            // 將數據呈現在網頁上
+            const weekdayNames = ["一", "二", "三", "四", "五", "六", "日"];
+            let displayText = "☕ 每日留白休息時間：";
+            let warningTriggered = false;
+
+            for (let day = 0; day < 7; day++) {
+                let hrs = Math.floor(daysRest[day] / 60);
+                let mins = daysRest[day] % 60;
+                displayText += `【週${weekdayNames[day]}: ${hrs}h${mins}m】 `;
+                
+                // 溫馨提示：如果某天除去了上班(假設扣掉固定大區塊)後，留白休息少於90分鐘
+                if (daysRest[day] < 90) {
+                    warningTriggered = true;
+                }
+            }
+
+            const dashboard = document.getElementById('rest-dashboard');
+            dashboard.innerText = displayText;
+
+            // 根據是否太滿，自動切換視覺顏色
+            if (warningTriggered) {
+                dashboard.style.background = "#fef7e0"; // 警告柔和黃
+                dashboard.style.border = "1px solid #f4b400";
+                dashboard.style.color = "#b06000";
+                dashboard.innerText = "⚠️ 警示：有些天的留白休息時間少於 1.5 小時囉！要留點時間給大腦放空～\n" + displayText;
+            } else {
+                dashboard.style.background = "#e6f4ea"; // 健康溫馨綠
+                dashboard.style.border = "1px solid #34a853";
+                dashboard.style.color = "#137333";
+            }
+        }
+
+
+        // 【新增：放大鏡橫槓縮放核心】
+        function updateZoom(val) {
+            currentCellHeight = parseInt(val);
+            const label = document.getElementById('zoom-label');
+            const rows = document.querySelectorAll('#grid-body tr');
+
+            // 1. 根據拉桿數值判斷目前處於哪種時間刻度模式
+            let mode = '10min';
+            if (currentCellHeight <= 15) {
+                mode = '1hour';
+                label.innerText = '1 小時 / 格';
+            } else if (currentCellHeight <= 25) {
+                mode = '30min';
+                label.innerText = '30 分鐘 / 格';
+            } else {
+                mode = '10min';
+                label.innerText = '10 分鐘 / 格';
+            }
+
+            // 2. 調整每一列的高度，並聰明隱藏多餘的格線與時間文字
+            rows.forEach(row => {
+                const min = parseInt(row.dataset.min);
+                const timeCell = row.querySelector('.time-cell');
+                const cells = row.querySelectorAll('td');
+
+                cells.forEach(td => td.style.height = `${currentCellHeight}px`);
+
+                if (mode === '1hour') {
+                    // 1小時模式：只顯示整點文字，隱藏中間的橫線讓畫面變乾淨
+                    timeCell.innerText = (min === 0) ? timeCell.dataset.fullTime : '';
+                    cells.forEach(td => {
+                        td.style.borderTop = (min === 0) ? '1px solid #dcdcdc' : 'none';
+                        td.style.borderBottom = (min === 50) ? '1px solid #dcdcdc' : 'none';
+                    });
+                } else if (mode === '30min') {
+                    // 30分鐘模式：顯示整點與30分文字，每30分鐘畫一條分隔線
+                    timeCell.innerText = (min === 0 || min === 30) ? timeCell.dataset.fullTime : '';
+                    cells.forEach(td => {
+                        td.style.borderTop = (min === 0 || min === 30) ? '1px solid #e0e0e0' : 'none';
+                        td.style.borderBottom = (min === 20 || min === 50) ? '1px solid #e0e0e0' : 'none';
+                    });
+                } else {
+                    // 10分鐘模式：恢復顯示所有時間與細格線
+                    timeCell.innerText = timeCell.dataset.fullTime;
+                    cells.forEach(td => {
+                        td.style.borderTop = '1px solid #f0f0f0';
+                        td.style.borderBottom = '1px solid #f0f0f0';
+                    });
+                }
+            });
+
+            // 3. 同步調整表格內所有已放置積木的高度，確保完美貼齊新刻度
+            let updatedBlocks = new Set();
+            for (let day = 0; day < 7; day++) {
+                for (let r = 0; r < scheduleData[day].length; r++) {
+                    const block = scheduleData[day][r];
+                    if (block && !updatedBlocks.has(block)) {
+                        updatedBlocks.add(block);
+                        block.el.style.height = `${(block.size * currentCellHeight) - 2}px`;
+                    }
+                }
+            }
+        }
+
+        // 【一週回顧計算與長條圖可視化核心】
+        function generateWeeklyReview() {
+            // 【新增：按第二下關閉看板的開關判斷】
+            const reviewCard = document.getElementById('review-card');
+            if (reviewCard.style.display === 'block') {
+                reviewCard.style.display = 'none';
+                playClickSound();
+                return; // 直接結束函數，不重複計算與播放完成音效
+            }
+
+            let totalBlocks = 0;
+            let completedBlocks = 0;
+            let timeCounters = {
+                'block-work': { name: '💼 上班', minutes: 0, color: '#2b5797' },
+                'block-cook': { name: '🍳 做菜', minutes: 0, color: '#33a853' },
+                'block-lesson': { name: '📝 教案/備課', minutes: 0, color: '#6f42c1' },
+                'block-guitar': { name: '🎸 練吉他', minutes: 0, color: '#ff9800' },
+                'block-sing': { name: '🎤 練唱歌', minutes: 0, color: '#e91e63' },
+                'block-theory': { name: '🎼 學樂理', minutes: 0, color: '#f4b400' },
+                'block-sleep': { name: '💤 睡覺', minutes: 0, color: '#3f51b5' }
+            };
+
+            let countedObjects = new Set();
+            for (let day = 0; day < 7; day++) {
+                for (let r = 0; r < scheduleData[day].length; r++) {
+                    const block = scheduleData[day][r];
+                    if (block && !countedObjects.has(block)) {
+                        countedObjects.add(block);
+                        totalBlocks++;
+                        if (block.isDone) completedBlocks++;
+                        if (timeCounters[block.type]) {
+                            timeCounters[block.type].minutes += (block.size * 10);
+                        }
+                    }
+                }
+            }
+
+            const rate = totalBlocks === 0 ? 0 : Math.round((completedBlocks / totalBlocks) * 100);
+            document.getElementById('review-completion').innerText = `🎯 本週共規劃 ${totalBlocks} 個任務，成功蓋章填滿 ${completedBlocks} 個！計畫達成率：${rate}%`;
+
+            const listEl = document.getElementById('review-stats-list');
+            listEl.innerHTML = '';
+
+            let maxMinutes = 0;
+            for (let key in timeCounters) {
+                if (timeCounters[key].minutes > maxMinutes) maxMinutes = timeCounters[key].minutes;
+            }
+
+            for (let key in timeCounters) {
+                const item = timeCounters[key];
+                if (item.minutes > 0) {
+                    const hrs = (item.minutes / 60).toFixed(1);
+                    const barWidth = maxMinutes === 0 ? 0 : (item.minutes / maxMinutes) * 100;
+
+                    const row = document.createElement('div');
+                    row.className = 'stat-item';
+                    row.innerHTML = `
+                        <div class="stat-color" style="background-color: ${item.color}"></div>
+                        <div style="width: 100px; font-weight:500;">${item.name}</div>
+                        <div class="stat-bar-bg">
+                            <div class="stat-bar-fill" style="background-color: ${item.color}; width: ${barWidth}%"></div>
+                        </div>
+                        <div style="width: 65px; text-align: right; font-weight: bold; color: #555;">${hrs} 小時</div>
+                    `;
+                    listEl.appendChild(row);
+                }
+            }
+
+            document.getElementById('review-card').style.display = 'block';
+            playStampAndChimeSound();
+        }
+
+        // 【新增：自動儲存紀錄核心】
+        function saveSchedule() {
+            const savedList = [];
+            let countedObjects = new Set();
+
+            // 掃描整週表格，把所有不重複的積木資訊打包起來
+            for (let day = 0; day < 7; day++) {
+                for (let r = 0; r < scheduleData[day].length; r++) {
+                    const block = scheduleData[day][r];
+                    if (block && !countedObjects.has(block)) {
+                        countedObjects.add(block);
+                        savedList.push({
+                            day: day,
+                            startRow: block.startRow,
+                            size: block.size,
+                            type: block.type,
+                            name: block.name,
+                            isDone: block.isDone
+                        });
+                    }
+                }
+            }
+            // 寫入瀏覽器專屬記憶體
+            localStorage.setItem('myTimeMyLife_data', JSON.stringify(savedList));
+        }
+
+        // 【新增：每次打開網頁自動還原紀錄】
+        function loadSchedule() {
+            const rawData = localStorage.getItem('myTimeMyLife_data');
+            if (!rawData) return; // 如果是第一次使用沒有存檔，就直接跳過
+
+            try {
+                const savedList = JSON.parse(rawData);
+                savedList.forEach(item => {
+                    // 依據存檔紀錄，一塊一塊把積木種回原本的位置與狀態
+                    createBlock(item.day, item.startRow, item.size, item.type, item.name, item.isDone, true);
+                });
+                updateRestTime(); // 還原完畢後更新一次休息時間
+            } catch (e) {
+                console.error("讀取存檔失敗：", e);
+            }
+        }
+
+        // 網頁一載入完成，立刻執行還原紀錄
+        window.addEventListener('DOMContentLoaded', loadSchedule);
+
+    </script>
+</body>
+</html>
